@@ -31,23 +31,9 @@
     statusIndicator.title = title;
   }
 
-  function normalizeText(value) {
-    return value.replace(/\\\\/g, "").replace(/\\\//g, "/").replace(/\/+$/g, "").trim();
-  }
-
-  function getFilenameFromUrl(url) {
-    let filename = url.split("/").pop()?.split("?")[0] || "download";
-    try {
-      filename = decodeURIComponent(filename);
-    } catch (error) {
-      void error;
-    }
-
-    if (/\.(jpg|jpeg|png|gif|webp|mp4|webm)$/i.test(filename)) {
-      return filename;
-    }
-
-    return url.includes(".mp4") ? `${filename}.mp4` : `${filename}.jpeg`;
+  function buildFilename(m) {
+    const ext = m.type === "video" ? "mp4" : "jpg";
+    return `oncedm_${m.capturedAt || Date.now()}.${ext}`;
   }
 
   async function loadPreviewMedia(url, element) {
@@ -67,7 +53,9 @@
 
     mediaGrid.querySelector(".empty-state")?.remove();
     mediaGrid.querySelector(".scanning-footer")?.remove();
-    mediaGrid.querySelectorAll(".skeleton-card").forEach((element) => element.remove());
+    mediaGrid
+      .querySelectorAll(".skeleton-card")
+      .forEach((element) => element.remove());
 
     card.className = "card";
     card.dataset.name = name;
@@ -170,40 +158,22 @@
 
       setStatus("scanning", "Scanning active");
 
-      const [{ result: pageHtml }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => document.documentElement.outerHTML,
-      });
+      const key = "oncedm_media_" + tab.id;
+      const data = await chrome.storage.local.get(key);
+      const list = data[key] || [];
 
-      const normalizedHtml = pageHtml
-        .split("\n")
-        .filter(Boolean)
-        .map(normalizeText)
-        .join("\n");
-
-      // Keep the original narrow matcher so OnceDM only surfaces
-      // the ephemeral "view once" media flow the first app detected.
-      const mediaRegex = /https:\/\/video[^",\s]+/g;
-      const existingUrls = new Set(Array.from(mediaMap.values()).map((item) => item.url));
-
-      let match;
       let foundNewMedia = false;
-      while ((match = mediaRegex.exec(normalizedHtml)) !== null) {
-        const url = match[0].replace(/\\+$/g, "");
-        if (existingUrls.has(url)) {
-          continue;
-        }
+      for (const m of list) {
+        const sig = m.dataUrl || m.url;
+        if (!sig) continue;
 
-        const filename = getFilenameFromUrl(url);
-        if (mediaMap.has(filename)) {
-          continue;
-        }
+        const filename = buildFilename(m);
+        if (mediaMap.has(filename)) continue;
 
         mediaMap.set(filename, {
-          url,
-          type: url.includes(".mp4") ? "video" : "image",
+          url: m.dataUrl || m.url,
+          type: m.type,
         });
-        existingUrls.add(url);
         createCard(filename);
         foundNewMedia = true;
       }
@@ -229,7 +199,8 @@
           return;
         }
 
-        const shortName = filename.length > 25 ? `${filename.slice(0, 25)}...` : filename;
+        const shortName =
+          filename.length > 25 ? `${filename.slice(0, 25)}...` : filename;
         showToast(`Downloading ${shortName}`);
       }
     );
@@ -288,7 +259,7 @@
         const card = downloadButton.closest(".card");
         const entry = mediaMap.get(card.dataset.name);
         if (entry) {
-          downloadSingle(entry.url, getFilenameFromUrl(entry.url));
+          downloadSingle(entry.url, card.dataset.name);
         }
         return;
       }
@@ -311,7 +282,9 @@
 
     $("#theme-btn").onclick = () => {
       document.body.classList.toggle("light");
-      localStorage.theme = document.body.classList.contains("light") ? "light" : "dark";
+      localStorage.theme = document.body.classList.contains("light")
+        ? "light"
+        : "dark";
     };
 
     $("#zip-btn").onclick = () => {
@@ -320,16 +293,21 @@
         return;
       }
 
-      const files = Array.from(mediaMap.entries()).map(([filename, { url }]) => ({ filename, url }));
+      const files = Array.from(mediaMap.entries()).map(
+        ([filename, { url }]) => ({ filename, url })
+      );
       showToast("Preparing ZIP in background...");
-      chrome.runtime.sendMessage({ action: "DOWNLOAD_ZIP", files }, (response) => {
-        if (chrome.runtime.lastError || !response?.success) {
-          showToast("ZIP download failed", "error");
-          return;
-        }
+      chrome.runtime.sendMessage(
+        { action: "DOWNLOAD_ZIP", files },
+        (response) => {
+          if (chrome.runtime.lastError || !response?.success) {
+            showToast("ZIP download failed", "error");
+            return;
+          }
 
-        showToast("ZIP download started");
-      });
+          showToast("ZIP download started");
+        }
+      );
     };
   }
 
@@ -344,7 +322,7 @@
 
     const version = $("#app-version");
     if (version) {
-      version.textContent = "v1.1.0";
+      version.textContent = "v1.2.0";
     }
 
     updateHeaderState();
