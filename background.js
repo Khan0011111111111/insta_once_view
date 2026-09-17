@@ -1,4 +1,6 @@
 (() => {
+  const STORAGE_PREFIX = "oncedm_media_";
+
   const crcTable = new Uint32Array(256);
   for (let i = 0; i < 256; i += 1) {
     let value = i;
@@ -167,17 +169,40 @@
 
   chrome.runtime.onInstalled.addListener(() => {});
 
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    chrome.storage.local.remove(STORAGE_PREFIX + tabId);
+  });
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.action === "OPEN_DESKTOP_VIEW") {
       chrome.tabs.query({ active: true, currentWindow: true })
         .then(([tab]) => {
           const sourceTabId = tab?.id;
-          const url = chrome.runtime.getURL(`popup.html?desktop=1${sourceTabId ? `&tabId=${sourceTabId}` : ""}`);
+          const url = chrome.runtime.getURL(
+            `popup.html?desktop=1${sourceTabId ? `&tabId=${sourceTabId}` : ""}`
+          );
           return chrome.tabs.create({ url });
         })
         .then(() => sendResponse({ success: true }))
         .catch((error) => sendResponse({ success: false, error: error.message }));
       return true;
+    }
+
+    if (message.action === "CAPTURE_MEDIA") {
+      const tabId = _sender.tab?.id;
+      if (tabId) {
+        const key = STORAGE_PREFIX + tabId;
+        chrome.storage.local.get(key).then((data) => {
+          const list = data[key] || [];
+          const m = message.media;
+          const sig = m.dataUrl || m.url;
+          if (sig && !list.some((x) => (x.dataUrl || x.url) === sig)) {
+            list.push(m);
+            chrome.storage.local.set({ [key]: list });
+          }
+        });
+      }
+      return false;
     }
 
     if (message.action === "DOWNLOAD_ZIP") {
@@ -188,11 +213,12 @@
     }
 
     if (message.action === "DOWNLOAD_SINGLE") {
-      chrome.downloads.download({
-        url: message.url,
-        filename: sanitizeFilename(message.filename),
-        saveAs: false,
-      })
+      chrome.downloads
+        .download({
+          url: message.url || message.dataUrl,
+          filename: sanitizeFilename(message.filename),
+          saveAs: false,
+        })
         .then((downloadId) => sendResponse({ success: true, id: downloadId }))
         .catch((error) => sendResponse({ success: false, error: error.message }));
       return true;
