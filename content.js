@@ -1,82 +1,86 @@
 (() => {
-  const BADGE_ID = "oncedm-inbox-badge";
-  const INBOX_PATH = "/direct/inbox/";
-  const THREAD_PATH = /^\/direct\/t\/[^/]+\/?$/;
+  if (window.__oncedmInjected) return;
+  window.__oncedmInjected = true;
 
-  function shouldShowBadge() {
-    return window.location.pathname === INBOX_PATH || THREAD_PATH.test(window.location.pathname);
+  const seen = new Set();
+  const MEDIA_RE = /\.(jpe?g|png|gif|webp|mp4|webm|m4v|mov|heic)(\?|$)/i;
+
+  function report(payload) {
+    try { window.postMessage({ __oncedm: true, ...payload }, "*"); } catch (_) {}
   }
 
-  function removeBadge() {
-    document.getElementById(BADGE_ID)?.remove();
+  // Hook URL.createObjectURL — this is where view-once blobs appear.
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = function (obj) {
+    const url = origCreate.call(this, obj);
+    try {
+      if (
+        obj instanceof Blob &&
+        (obj.type.startsWith("image/") || obj.type.startsWith("video/")) &&
+        !seen.has(url)
+      ) {
+        seen.add(url);
+        const reader = new FileReader();
+        reader.onload = () =>
+          report({
+            kind: "blob",
+            dataUrl: reader.result,
+            mime: obj.type,
+            size: obj.size,
+            type: obj.type.startsWith("video/") ? "video" : "image",
+          });
+        reader.readAsDataURL(obj);
+      }
+    } catch (_) {}
+    return url;
+  };
+
+  // Hook fetch for URL-style media (older IG flows).
+  const origFetch = window.fetch;
+  window.fetch = function (...args) {
+    const input = args[0];
+    const url = typeof input === "string" ? input : input?.url;
+    if (url && MEDIA_RE.test(url) && !seen.has(url)) {
+      seen.add(url);
+      report({
+        kind: "url",
+        url,
+        type: /\.(mp4|webm|m4v|mov)$/i.test(url) ? "video" : "image",
+      });
+    }
+    return origFetch.apply(this, args);
+  };
+
+  // Hook XHR for the same reason.
+  const origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    if (typeof url === "string" && MEDIA_RE.test(url) && !seen.has(url)) {
+      seen.add(url);
+      report({
+        kind: "url",
+        url,
+        type: /\.(mp4|webm|m4v|mov)$/i.test(url) ? "video" : "image",
+      });
+    }
+    return origOpen.call(this, method, url, ...rest);
+  };
+
+  // DOM fallback — catches already-rendered media.
+  function scanTags() {
+    document
+      .querySelectorAll("img[src], video[src], video source[src]")
+      .forEach((el) => {
+        const src = el.currentSrc || el.src;
+        if (src && MEDIA_RE.test(src) && !seen.has(src)) {
+          seen.add(src);
+          report({
+            kind: "url",
+            url: src,
+            type: el.tagName === "VIDEO" ? "video" : "image",
+          });
+        }
+      });
   }
-
-  function ensureBadge() {
-    if (!shouldShowBadge()) {
-      removeBadge();
-      return;
-    }
-
-    const existing = document.getElementById(BADGE_ID);
-    if (existing) {
-      return;
-    }
-
-    const badge = document.createElement("div");
-    const icon = document.createElement("img");
-    badge.id = BADGE_ID;
-    icon.src = chrome.runtime.getURL("icon.png");
-    icon.alt = "OnceDM";
-    badge.appendChild(icon);
-    badge.title = "Open OnceDM desktop view";
-    badge.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "OPEN_DESKTOP_VIEW" });
-    });
-    document.body.appendChild(badge);
-  }
-
-  const style = document.createElement("style");
-  style.textContent = `
-    #${BADGE_ID} {
-      position: fixed;
-      left: 18px;
-      bottom: 18px;
-      transform: none;
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #000;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
-      backdrop-filter: blur(12px);
-      z-index: 2147483647;
-      pointer-events: auto;
-      cursor: pointer;
-    }
-
-    #${BADGE_ID} img {
-      width: 24px;
-      height: 24px;
-      display: block;
-    }
-  `;
-
-  document.documentElement.appendChild(style);
-
-  let lastPath = window.location.pathname;
-  setInterval(() => {
-    if (window.location.pathname !== lastPath) {
-      lastPath = window.location.pathname;
-      ensureBadge();
-    }
-  }, 500);
-
-  new MutationObserver(() => {
-    ensureBadge();
-  }).observe(document.documentElement, { childList: true, subtree: true });
-
-  ensureBadge();
+  setInterval(scanTags, 1500);
+  scanTags();
 })();
