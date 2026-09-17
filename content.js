@@ -49,6 +49,11 @@
       return;
     }
 
+    // 🛑 FIX: Do not try to append to a body that doesn't exist yet
+    if (!document.body) {
+      return;
+    }
+
     const badge = document.createElement("div");
     const icon = document.createElement("img");
     badge.id = BADGE_ID;
@@ -91,6 +96,7 @@
     }
   `;
 
+  // Attach style to <html> which always exists
   document.documentElement.appendChild(style);
 
   let lastPath = window.location.pathname;
@@ -101,6 +107,8 @@
     }
   }, 500);
 
+  // This observer will fire when <body> is finally created,
+  // which will trigger ensureBadge() to run successfully.
   new MutationObserver(() => {
     ensureBadge();
   }).observe(document.documentElement, { childList: true, subtree: true });
