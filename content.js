@@ -3,15 +3,12 @@
   const INBOX_PATH = "/direct/inbox/";
   const THREAD_PATH = /^\/direct\/t\/[^/]+\/?$/;
 
-  // ── Inject the page-context hook ──
-  const s = document.createElement("script");
-  s.src = chrome.runtime.getURL("inject.js");
-  s.onload = () => s.remove();
-  (document.head || document.documentElement).appendChild(s);
+  console.log("[OnceDM] content.js loaded on", window.location.pathname);
 
   // ── Forward captured media to background ──
   window.addEventListener("message", (e) => {
     if (e.source !== window || !e.data || !e.data.__oncedm) return;
+    console.log("[OnceDM] content.js received message:", e.data.type, e.data.mime);
     chrome.runtime
       .sendMessage({
         action: "CAPTURE_MEDIA",
@@ -44,15 +41,8 @@
       removeBadge();
       return;
     }
-
-    if (document.getElementById(BADGE_ID)) {
-      return;
-    }
-
-    // 🛑 FIX: Do not try to append to a body that doesn't exist yet
-    if (!document.body) {
-      return;
-    }
+    if (document.getElementById(BADGE_ID)) return;
+    if (!document.body) return;
 
     const badge = document.createElement("div");
     const icon = document.createElement("img");
@@ -70,33 +60,16 @@
   const style = document.createElement("style");
   style.textContent = `
     #${BADGE_ID} {
-      position: fixed;
-      left: 18px;
-      bottom: 18px;
-      transform: none;
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #000;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
+      position: fixed; left: 18px; bottom: 18px;
+      width: 44px; height: 44px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      background: #000; border: 1px solid rgba(255,255,255,.12);
+      box-shadow: 0 14px 28px rgba(0,0,0,.28);
       backdrop-filter: blur(12px);
-      z-index: 2147483647;
-      pointer-events: auto;
-      cursor: pointer;
+      z-index: 2147483647; cursor: pointer;
     }
-
-    #${BADGE_ID} img {
-      width: 24px;
-      height: 24px;
-      display: block;
-    }
+    #${BADGE_ID} img { width: 24px; height: 24px; display: block; }
   `;
-
-  // Attach style to <html> which always exists
   document.documentElement.appendChild(style);
 
   let lastPath = window.location.pathname;
@@ -107,11 +80,10 @@
     }
   }, 500);
 
-  // This observer will fire when <body> is finally created,
-  // which will trigger ensureBadge() to run successfully.
-  new MutationObserver(() => {
-    ensureBadge();
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver(ensureBadge).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
 
   ensureBadge();
 })();
